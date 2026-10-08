@@ -15,7 +15,7 @@ jobs:
         run: |
           mkdir -p out/libs/arm64-v8a
           cp jni/libs/arm64-v8a/libZyGames.so out/libs/arm64-v8a/libZyGames.so
-          cp jni/../start.sh out/start.sh 2>/dev/null || true
+          cp start.sh out/start.sh
           cd out
           zip -r ../FFInject.zip .
       - uses: actions/upload-artifact@v4

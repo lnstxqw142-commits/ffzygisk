@@ -2,7 +2,6 @@
 
 [ "$(id -u 2>/dev/null || echo 0)" -ne 0 ] && echo "Please use root privileges to execute !" && exit 1
 
-# Define the package name
 package_name="com.dts.freefiremax"
 game_abi=$(dumpsys package "$package_name" 2>/dev/null | awk -F'=' '/primaryCpuAbi/ {print $2; exit}')
 device_abi=$(getprop ro.product.cpu.abi 2>/dev/null)
