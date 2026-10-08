@@ -21,7 +21,7 @@ jobs:
       - name: Pack Module
         run: |
           mkdir -p module/zygisk
-          cp libs/arm64-v8a/libffzygisk.so module/zygisk/arm64-v8a.so
+          cp jni/libs/arm64-v8a/libffzygisk.so module/zygisk/arm64-v8a.so
 
           printf 'id=ffzygisk\nname=FF Native Menu\nversion=4.0\nversionCode=4\nauthor=lnstxqw142\ndescription=FF Native Menu for FF MAX\n' > module/module.prop
 
