@@ -1,0 +1,99 @@
+#include <jni.h>
+#include <android/log.h>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <dlfcn.h>
+#include <pthread.h>
+#include <cmath>
+#include <GLES3/gl3.h>
+#include <EGL/egl.h>
+#include "zygisk.hpp"
+#include "hook/And64InlineHook.hpp"
+#include "offset.h"
+#include "config.h"
+#include "overlay.h"
+#include "esp.h"
+#include "aim.h"
+#include "game_state.h"
+#define TAG "FFZYG"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+using zygisk::Api;
+using zygisk::AppSpecializeArgs;
+static unsigned long g_base = 0;
+static unsigned long getLibBase(const char* lib) {
+    FILE* f = fopen("/proc/self/maps","r");
+    if (!f) return 0;
+    char line[512]; unsigned long b=0;
+    while (fgets(line,sizeof(line),f)) {
+        if (strstr(line,lib)) { sscanf(line,"%lx-",&b); break; }
+    }
+    fclose(f); return b;
+}
+typedef EGLBoolean (*eglSwapBuffers_t)(EGLDisplay, EGLSurface);
+static eglSwapBuffers_t orig_eglSwapBuffers = nullptr;
+static EGLBoolean my_eglSwapBuffers(EGLDisplay d, EGLSurface s) {
+    static bool init=false;
+    if (!init) { overlayInit(); init=true; }
+    EGLint w=0,h=0;
+    eglQuerySurface(d,s,EGL_WIDTH,&w);
+    eglQuerySurface(d,s,EGL_HEIGHT,&h);
+    if (w>0 && h>0 && orig_eglSwapBuffers) {
+        GLint lp,lt,lb,lv[4];
+        glGetIntegerv(GL_CURRENT_PROGRAM,&lp);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,&lt);
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&lb);
+        glGetIntegerv(GL_VIEWPORT,lv);
+        overlayRender(w,h);
+        glUseProgram(lp);
+        glBindTexture(GL_TEXTURE_2D,lt);
+        glBindBuffer(GL_ARRAY_BUFFER,lb);
+        glViewport(lv[0],lv[1],lv[2],lv[3]);
+    }
+    return orig_eglSwapBuffers(d,s);
+}
+static void hookEgl() {
+    void* h = dlopen("libEGL.so", RTLD_NOW);
+    if (!h) { LOGE("libEGL"); return; }
+    void* fn = dlsym(h, "eglSwapBuffers");
+    if (!fn) { LOGE("eglSwapBuffers"); return; }
+    A64HookFunction(fn, (void*)my_eglSwapBuffers, (void**)&orig_eglSwapBuffers);
+    LOGI("eglSwapBuffers HOOKED");
+}
+static void applyAll() {
+    g_base = getLibBase("libil2cpp.so");
+    if (!g_base) { LOGE("libil2cpp"); return; }
+    LOGI("base=0x%lx", g_base);
+    hookEgl();
+    LOGI("ALL DONE");
+}
+class FFZygisk : public zygisk::ModuleBase {
+public:
+    void onLoad(Api* a, JNIEnv* e) override { api=a; env=e; }
+    void preAppSpecialize(AppSpecializeArgs* args) override {
+        const char* p = nullptr;
+        if (args && args->nice_name) p = env->GetStringUTFChars(args->nice_name, nullptr);
+        if (p) {
+            if (!strcmp(p,"com.dts.freefiremax") || !strcmp(p,"com.dts.freefireth")) {
+                isFF = true;
+                LOGI("Target: %s", p);
+            }
+            env->ReleaseStringUTFChars(args->nice_name, p);
+        }
+    }
+    void postAppSpecialize(const AppSpecializeArgs* args) override {
+        if (!isFF) return;
+        for (int i=0;i<150;i++) {
+            if (getLibBase("libil2cpp.so")) break;
+            usleep(200000);
+        }
+        applyAll();
+    }
+private:
+    Api* api=nullptr; JNIEnv* env=nullptr; bool isFF=false;
+};
+REGISTER_ZYGISK_MODULE(FFZygisk)
