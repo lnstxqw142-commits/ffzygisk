@@ -1,0 +1,69 @@
+name: Build Zygisk Module
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+          add-to-path: true
+
+      - name: Build .so
+        run: |
+          cd jni
+          ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=Android.mk
+
+      - name: Create Magisk Module
+        run: |
+          mkdir -p module/zygisk
+          cp libs/arm64-v8a/libffzygisk.so module/zygisk/arm64-v8a.so
+
+          cat > module/module.prop << 'M'
+          id=ffzygisk
+          name=FF Native Menu
+          version=4.0
+          versionCode=4
+          author=nhatanh
+          description=Native menu for FF MAX
+          M
+
+          cat > module/customize.sh << 'C'
+          #!/system/bin/sh
+          SKIPUNZIP=0
+          set_perm_recursive $MODPATH 0 0 0755 0644
+          set_perm $MODPATH/zygisk/arm64-v8a.so 0 0 0644
+          C
+          chmod +x module/customize.sh
+
+          mkdir -p module/META-INF/com/google/android
+          cat > module/META-INF/com/google/android/update-binary << 'UB'
+          #!/sbin/sh
+          umask 022
+          OUTFD=$2
+          ZIPFILE=$3
+          mount /data 2>/dev/null
+          ui_print() { echo "$1"; }
+          . /data/adb/magisk/util_functions.sh
+          [ $MAGISK_VER_CODE -lt 20400 ] && { ui_print "Magisk 20.4+"; exit 1; }
+          install_module
+          exit 0
+          UB
+          echo "# Magisk" > module/META-INF/com/google/android/updater-script
+
+          cd module
+          zip -r ../FFZygisk.zip .
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFZygisk
+          path: FFZygisk.zip
