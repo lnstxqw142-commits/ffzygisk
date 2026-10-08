@@ -1,4 +1,4 @@
-name: Build Inject SO
+name: Build Universal
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -11,14 +11,34 @@ jobs:
       - name: Build .so
         run: |
           ndk-build NDK_PROJECT_PATH=jni APP_BUILD_SCRIPT=jni/Android.mk NDK_APPLICATION_MK=jni/Application.mk
-      - name: Pack
+      - name: Pack BOTH (zygisk + inject)
         run: |
-          mkdir -p out/libs/arm64-v8a
-          cp jni/libs/arm64-v8a/libZyGames.so out/libs/arm64-v8a/libZyGames.so
-          cp start.sh out/start.sh
-          cd out
-          zip -r ../FFInject.zip .
+          SO=jni/libs/arm64-v8a/libffzygisk.so
+          ls -la $SO
+
+          # 1. ZIP cho Magisk Zygisk
+          mkdir -p module/zygisk
+          cp $SO module/zygisk/arm64-v8a.so
+          printf 'id=ffzygisk\nname=FF Native Menu\nversion=5.0\nversionCode=5\nauthor=lnstxqw142\ndescription=FF Native Menu (Zygisk + Inject)\n' > module/module.prop
+          printf '#!/system/bin/sh\nSKIPUNZIP=0\nset_perm_recursive $MODPATH 0 0 0755 0644\nset_perm $MODPATH/zygisk/arm64-v8a.so 0 0 0644\n' > module/customize.sh
+          chmod +x module/customize.sh
+          mkdir -p module/META-INF/com/google/android
+          printf '#!/sbin/sh\numask 022\nOUTFD=$2\nZIPFILE=$3\nmount /data 2>/dev/null\nui_print() { echo "$1"; }\n. /data/adb/magisk/util_functions.sh\n[ $MAGISK_VER_CODE -lt 20400 ] && exit 1\ninstall_module\nexit 0\n' > module/META-INF/com/google/android/update-binary
+          echo "# Magisk" > module/META-INF/com/google/android/updater-script
+          (cd module && zip -r ../FFZygisk.zip .)
+
+          # 2. ZIP cho Inject (start.sh)
+          mkdir -p inject/libs/arm64-v8a
+          cp $SO inject/libs/arm64-v8a/libZyGames.so
+          cp start.sh inject/start.sh
+          chmod +x inject/start.sh
+          (cd inject && zip -r ../FFInject.zip .)
+
+          ls -la FFZygisk.zip FFInject.zip
+
       - uses: actions/upload-artifact@v4
         with:
-          name: FFInject
-          path: FFInject.zip
+          name: FFBuilds
+          path: |
+            FFZygisk.zip
+            FFInject.zip
