@@ -29,7 +29,7 @@
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
 
-static unsigned long g_base = 0;
+unsigned long g_base = 0;
 static void* g_localPlayer = nullptr;
 
 // ============================================================
