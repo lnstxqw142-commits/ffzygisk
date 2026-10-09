@@ -2,11 +2,17 @@
 #include <android/log.h>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <signal.h>
 #include <dirent.h>
 #include <string>
 #include <vector>
@@ -20,39 +26,19 @@
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
 
-static unsigned long getLibBase(const char* lib) {
-    FILE* f = fopen("/proc/self/maps", "r");
-    if (!f) return 0;
-    char line[512]; unsigned long b = 0;
-    while (fgets(line, sizeof(line), f)) {
-        if (strstr(line, lib)) { sscanf(line, "%lx-", &b); break; }
-    }
-    fclose(f);
-    return b;
-}
-
-// ============================================================
-// HOOK libc functions để ẩn frida
-// ============================================================
 typedef FILE* (*fopen_t)(const char*, const char*);
 static fopen_t orig_fopen = nullptr;
 static FILE* my_fopen(const char* path, const char* mode) {
     if (path) {
-        // Chặn đọc các file chứa "frida"
-        if (strstr(path, "frida") || strstr(path, "re.frida") ||
-            strstr(path, "gum-js") || strstr(path, "frida-agent")) {
+        if (strstr(path, "frida") || strstr(path, "gum-js") ||
+            strstr(path, "frida-agent") || strstr(path, "re.frida")) {
             LOGI("block fopen: %s", path);
             return nullptr;
-        }
-        // Chặn /proc/self/maps
-        if (strstr(path, "/proc/self/maps")) {
-            // Cho phép nhưng sẽ filter sau
         }
     }
     return orig_fopen(path, mode);
 }
 
-// Chặn strstr tìm "frida"
 typedef char* (*strstr_t)(const char*, const char*);
 static strstr_t orig_strstr = nullptr;
 static char* my_strstr(const char* hay, const char* needle) {
@@ -64,12 +50,11 @@ static char* my_strstr(const char* hay, const char* needle) {
     return orig_strstr(hay, needle);
 }
 
-// Chặn connect tới port frida
 typedef int (*connect_t)(int, const struct sockaddr*, socklen_t);
 static connect_t orig_connect = nullptr;
 static int my_connect(int fd, const struct sockaddr* addr, socklen_t len) {
     if (addr && addr->sa_family == AF_INET) {
-        struct sockaddr_in* in = (struct sockaddr_in*)addr;
+        const struct sockaddr_in* in = (const struct sockaddr_in*)addr;
         int port = ntohs(in->sin_port);
         if (port == 27042 || port == 27043) {
             LOGI("block connect port %d", port);
@@ -79,16 +64,12 @@ static int my_connect(int fd, const struct sockaddr* addr, socklen_t len) {
     return orig_connect(fd, addr, len);
 }
 
-// Chặn kill khi phát hiện frida
 typedef int (*kill_t)(pid_t, int);
 static kill_t orig_kill = nullptr;
 static int my_kill(pid_t pid, int sig) {
-    return 0; // luôn thành công giả
+    return 0;
 }
 
-// ============================================================
-// INSTALL HOOKS
-// ============================================================
 static void installAntiFridaHooks() {
     void* libc = dlopen("libc.so", RTLD_NOW);
     if (!libc) { LOGE("libc not found"); return; }
@@ -120,9 +101,6 @@ static void installAntiFridaHooks() {
     LOGI("Anti-frida bypass installed");
 }
 
-// ============================================================
-// ZYGISK MODULE
-// ============================================================
 class FFAF : public zygisk::ModuleBase {
 public:
     void onLoad(Api* a, JNIEnv* e) override { api = a; env = e; }
@@ -143,11 +121,7 @@ public:
 
     void postAppSpecialize(const AppSpecializeArgs* args) override {
         if (!isFF) return;
-        // Đợi libc load xong
-        for (int i = 0; i < 50; i++) {
-            if (getLibBase("libc.so")) break;
-            usleep(100000);
-        }
+        sleep(1);
         installAntiFridaHooks();
     }
 
